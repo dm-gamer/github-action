@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  AWS_REGION: 'us-west-2'  # Changed to match your EC2 runner region
+  AWS_REGION: 'us-west-2'
 
 jobs:
   deploy:
@@ -31,8 +31,6 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-        with:
-          registry-type: private
 
       - name: Echo ECR Details
         env:
