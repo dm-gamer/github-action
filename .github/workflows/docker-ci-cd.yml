@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  AWS_REGION: ap-south-1
+  AWS_REGION: 'ap-south-1'
 
 jobs:
   deploy:
@@ -31,61 +31,49 @@ jobs:
       - name: Build and tag Docker image
         run: |
           IMAGE_TAG=${{ github.sha }}
-
-          docker build \
-            -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG \
-            .
-
-          docker tag \
-            ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG \
-            ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
-
+          docker build -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG .
+          docker tag ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
       - name: Push Docker image to ECR
         run: |
-          docker push \
-            ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
-          docker push \
-            ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
-
-      - name: Delete old images from ECR
+      - name: Delete old images from ECR (keep current only)
         run: |
-          echo "Checking for old ECR images..."
-
+          echo "Fetching old images from ECR (excluding current build: ${{ env.IMAGE_TAG }})..."
+          
           OLD_IMAGES=$(aws ecr list-images \
             --repository-name ${{ secrets.ECR_REPOSITORY }} \
             --region ${{ env.AWS_REGION }} \
             --query "imageIds[?imageTag!='${{ env.IMAGE_TAG }}' && imageTag!='latest']" \
             --output json)
-
-          COUNT=$(echo "$OLD_IMAGES" | jq length)
-
-          if [ "$COUNT" -gt 0 ]; then
-            echo "Deleting $COUNT old image(s)..."
-
+          
+          COUNT=$(echo $OLD_IMAGES | jq '. | length' 2>/dev/null || echo "0")
+          
+          if [ "$COUNT" -gt "0" ]; then
+            echo "Found $COUNT old image(s). Deleting..."
             aws ecr batch-delete-image \
               --repository-name ${{ secrets.ECR_REPOSITORY }} \
               --region ${{ env.AWS_REGION }} \
-              --image-ids "$OLD_IMAGES"
+              --image-ids "$OLD_IMAGES" || echo "Failed to delete some images"
           else
-            echo "No old images found."
+            echo "No old images to delete."
           fi
 
       - name: Stop and remove existing container
         run: |
-          docker stop ${{ secrets.CONTAINER_NAME }} || true
-          docker rm ${{ secrets.CONTAINER_NAME }} || true
+          docker stop ${{ secrets.CONTAINER_NAME }} 2>/dev/null || true
+          docker rm ${{ secrets.CONTAINER_NAME }} 2>/dev/null || true
 
-      - name: Remove unused local Docker images
+      - name: Remove old local Docker images
         run: |
-          docker image prune -af || true
+          docker image prune -f --filter "until=24h" || true
 
       - name: Pull latest image from ECR
         run: |
-          docker pull \
-            ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+          docker pull ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
 
       - name: Run new Docker container
         run: |
@@ -97,14 +85,11 @@ jobs:
 
       - name: Verify container is running
         run: |
-          sleep 10
-
+          sleep 5
           if docker ps | grep -q ${{ secrets.CONTAINER_NAME }}; then
-            echo "✅ Container is running successfully"
+            echo "✅ Container is running"
           else
-            echo "❌ Container failed to start"
-
+            echo "❌ Container failed to start!"
             docker logs ${{ secrets.CONTAINER_NAME }}
-
             exit 1
           fi
