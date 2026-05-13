@@ -25,23 +25,59 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Verify AWS credentials
+        run: |
+          echo "Testing AWS credentials..."
+          aws sts get-caller-identity
+          echo "✅ AWS credentials working"
+
+      - name: Check if ECR repository exists
+        run: |
+          if aws ecr describe-repositories --repository-names ${{ secrets.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "✅ ECR repository exists"
+          else
+            echo "⚠️ ECR repository doesn't exist, creating it..."
+            aws ecr create-repository --repository-name ${{ secrets.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }}
+          fi
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: private
 
-      - name: Build and tag Docker image
+      - name: Verify ECR login
+        run: |
+          echo "ECR registry: ${{ secrets.ECR_REGISTRY }}"
+          echo "ECR repository: ${{ secrets.ECR_REPOSITORY }}"
+          # Test if Docker is authenticated to ECR
+          docker system info | grep -i "Username" || echo "Checking Docker auth..."
+          cat ~/.docker/config.json 2>/dev/null | grep -i "${{ secrets.ECR_REGISTRY }}" && echo "✅ ECR auth found in Docker config" || echo "⚠️ No ECR auth found"
+
+      - name: Build Docker image
         run: |
           IMAGE_TAG=${{ github.sha }}
+          echo "Building image: ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG"
           docker build -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG .
           docker tag ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
           echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
       - name: Push Docker image to ECR
         run: |
+          echo "Pushing to ECR..."
+          echo "Registry: ${{ secrets.ECR_REGISTRY }}"
+          echo "Repository: ${{ secrets.ECR_REPOSITORY }}"
+          
+          # Manual ECR login as backup
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
+          
+          # Push the images
           docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
           docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
+          
+          echo "✅ Push completed successfully"
 
-      - name: Delete old images from ECR (keep current only)
+      - name: Delete old images from ECR
         run: |
           echo "Fetching old images from ECR (excluding current build: ${{ env.IMAGE_TAG }})..."
           
@@ -68,10 +104,6 @@ jobs:
           docker stop ${{ secrets.CONTAINER_NAME }} 2>/dev/null || true
           docker rm ${{ secrets.CONTAINER_NAME }} 2>/dev/null || true
 
-      - name: Remove old local Docker images
-        run: |
-          docker image prune -f --filter "until=24h" || true
-
       - name: Pull latest image from ECR
         run: |
           docker pull ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
@@ -89,11 +121,9 @@ jobs:
           sleep 5
           if docker ps | grep -q ${{ secrets.CONTAINER_NAME }}; then
             echo "✅ Container is running successfully"
-            echo "Container logs (last 10 lines):"
             docker logs --tail 10 ${{ secrets.CONTAINER_NAME }}
           else
             echo "❌ Container failed to start!"
-            echo "Container logs:"
             docker logs ${{ secrets.CONTAINER_NAME }}
             exit 1
           fi
