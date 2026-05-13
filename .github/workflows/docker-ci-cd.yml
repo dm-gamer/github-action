@@ -177,5 +177,5 @@ jobs:
         run: |
           echo "==================================="
           echo "🎉 CI/CD Pipeline Completed Successfully"
-          echo "Application deployed successfully!"
+          echo "Application deployed successfully hooray!"
           echo "==================================="
