@@ -14,6 +14,15 @@ jobs:
     runs-on: self-hosted
 
     steps:
+      - name: Echo Pipeline Start
+        run: |
+          echo "==================================="
+          echo "🚀 CI/CD Pipeline Started"
+          echo "Workflow is running successfully..."
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "==================================="
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -183,3 +192,10 @@ jobs:
             docker logs "${CONTAINER_NAME}"
             exit 1
           fi
+
+      - name: Echo Pipeline Success
+        run: |
+          echo "==================================="
+          echo "🎉 CI/CD Pipeline Completed Successfully"
+          echo "Application deployed successfully!"
+          echo "==================================="
