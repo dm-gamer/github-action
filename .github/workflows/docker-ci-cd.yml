@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  AWS_REGION: 'us-west-2'
+  AWS_REGION: 'ap-south-1'
 
 jobs:
   deploy:
@@ -89,7 +89,7 @@ jobs:
 
           OLD_IMAGES=$(aws ecr list-images \
             --repository-name "${ECR_REPOSITORY}" \
-            --region "ap-south-1" \
+            --region "${{ env.AWS_REGION }}" \
             --query "imageIds[?imageTag!='${{ env.IMAGE_TAG }}' && imageTag!='latest']" \
             --output json)
 
@@ -104,7 +104,7 @@ jobs:
             echo "Deleting old image(s)..."
             aws ecr batch-delete-image \
               --repository-name "${ECR_REPOSITORY}" \
-              --region "ap-south-1" \
+              --region "${{ env.AWS_REGION }}" \
               --image-ids "$OLD_IMAGES" || echo "Failed to delete some images"
           else
             echo "No old images to delete."
@@ -183,5 +183,3 @@ jobs:
             docker logs "${CONTAINER_NAME}"
             exit 1
           fi
-
-convert into ap-south-1
