@@ -22,6 +22,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
@@ -87,9 +88,12 @@ jobs:
         run: |
           sleep 5
           if docker ps | grep -q ${{ secrets.CONTAINER_NAME }}; then
-            echo "✅ Container is running"
+            echo "✅ Container is running successfully"
+            echo "Container logs (last 10 lines):"
+            docker logs --tail 10 ${{ secrets.CONTAINER_NAME }}
           else
             echo "❌ Container failed to start!"
+            echo "Container logs:"
             docker logs ${{ secrets.CONTAINER_NAME }}
             exit 1
           fi
