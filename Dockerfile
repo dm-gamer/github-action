@@ -1,99 +1,20 @@
-name: CI/CD Pipeline
+# Build stage
+FROM node:20-alpine AS builder
+WORKDIR /app
 
-on:
-  push:
-    branches:
-      - main
+COPY package*.json ./
+RUN npm ci --only=production && npm cache clean --force
 
-env:
-  AWS_REGION: 'ap-south-1'  # Consider hardcoding or using vars instead of secrets
-  # Or keep as vars: ${{ vars.AWS_REGION }}
+# Production stage
+FROM node:20-alpine
+WORKDIR /app
 
-jobs:
-  deploy:
-    name: Build, Push & Deploy
-    runs-on: self-hosted
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S -u 1001 -G nodejs nodejs
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+COPY --from=builder /app/node_modules ./node_modules
+COPY app.js ./
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and tag Docker image
-        run: |
-          IMAGE_TAG=${{ github.sha }}
-          docker build -t ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG .
-          docker tag ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-
-      - name: Push Docker image to ECR
-        run: |
-          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-          docker push ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
-
-      - name: Delete old images from ECR (keep current only)
-        run: |
-          echo "Fetching old images from ECR (excluding current build: ${{ env.IMAGE_TAG }})..."
-          
-          # Using jq instead of python (more common on self-hosted runners)
-          OLD_IMAGES=$(aws ecr list-images \
-            --repository-name ${{ secrets.ECR_REPOSITORY }} \
-            --region ${{ secrets.AWS_REGION }} \
-            --query "imageIds[?imageTag!='${{ env.IMAGE_TAG }}' && imageTag!='latest']" \
-            --output json)
-          
-          COUNT=$(echo $OLD_IMAGES | jq '. | length' 2>/dev/null || echo "0")
-          
-          if [ "$COUNT" -gt "0" ]; then
-            echo "Found $COUNT old image(s). Deleting..."
-            aws ecr batch-delete-image \
-              --repository-name ${{ secrets.ECR_REPOSITORY }} \
-              --region ${{ secrets.AWS_REGION }} \
-              --image-ids "$OLD_IMAGES" || echo "Failed to delete some images"
-          else
-            echo "No old images to delete."
-          fi
-
-      - name: Stop and remove existing container
-        run: |
-          docker stop ${{ secrets.CONTAINER_NAME }} 2>/dev/null || true
-          docker rm ${{ secrets.CONTAINER_NAME }} 2>/dev/null || true
-
-      - name: Remove old local Docker images
-        run: |
-          docker image prune -f --filter "until=24h" || true
-
-      - name: Pull latest image from ECR
-        run: |
-          docker pull ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
-
-      - name: Run new Docker container
-        run: |
-          docker run -d \
-            --name ${{ secrets.CONTAINER_NAME }} \
-            --restart unless-stopped \
-            -p ${{ secrets.HOST_PORT }}:${{ secrets.CONTAINER_PORT }} \
-            ${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:latest
-
-      - name: Verify container is running
-        run: |
-          sleep 5
-          if docker ps | grep -q ${{ secrets.CONTAINER_NAME }}; then
-            echo "✅ Container is running"
-            # Optional: Add health check endpoint verification
-            # curl -f http://localhost:${{ secrets.HOST_PORT }}/health || exit 1
-          else
-            echo "❌ Container failed to start!"
-            docker logs ${{ secrets.CONTAINER_NAME }}
-            exit 1
-          fi
+USER nodejs
+EXPOSE 3000
+CMD ["node", "app.js"]
