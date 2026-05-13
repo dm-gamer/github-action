@@ -7,6 +7,9 @@ on:
 
 env:
   AWS_REGION: 'ap-south-1'
+  ECR_REGISTRY: '611916855591.dkr.ecr.ap-south-1.amazonaws.com'
+  ECR_REPOSITORY: 'github-action'
+  CONTAINER_NAME: 'github-action'
 
 jobs:
   deploy:
@@ -42,32 +45,22 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Echo ECR Details
-        env:
-          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
         run: |
-          echo "ECR Registry: ${ECR_REGISTRY}"
-          echo "ECR Repository: ${ECR_REPOSITORY}"
+          echo "ECR Registry: ${{ env.ECR_REGISTRY }}"
+          echo "ECR Repository: ${{ env.ECR_REPOSITORY }}"
 
       - name: Build and tag Docker image
-        env:
-          ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
         run: |
           IMAGE_TAG="${{ github.sha }}"
-          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}"
-
+          IMAGE_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}"
           echo "==================================="
           echo "Building Docker Image"
           echo "IMAGE TAG : ${IMAGE_TAG}"
           echo "IMAGE URI : ${IMAGE_URI}"
           echo "==================================="
-
           docker build -t "${IMAGE_URI}:${IMAGE_TAG}" .
-
           echo "Tagging latest image..."
           docker tag "${IMAGE_URI}:${IMAGE_TAG}" "${IMAGE_URI}:latest"
-
           echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
           echo "IMAGE_URI=${IMAGE_URI}" >> "$GITHUB_ENV"
 
@@ -77,33 +70,27 @@ jobs:
           echo "Pushing Docker images to ECR"
           echo "==================================="
           echo "Pushing image: ${IMAGE_URI}:${{ env.IMAGE_TAG }}"
-          
           docker push "${IMAGE_URI}:${{ env.IMAGE_TAG }}"
           docker push "${IMAGE_URI}:latest"
           echo "Docker images pushed successfully"
 
       - name: Delete old images from ECR
-        env:
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
         run: |
           echo "==================================="
           echo "Cleaning old ECR images"
           echo "==================================="
-          
           OLD_IMAGES=$(aws ecr list-images \
-            --repository-name "${ECR_REPOSITORY}" \
+            --repository-name "${{ env.ECR_REPOSITORY }}" \
             --region "${{ env.AWS_REGION }}" \
             --query "imageIds[?imageTag!='${{ env.IMAGE_TAG }}' && imageTag!='latest']" \
             --output json)
-
           echo "Old Images JSON: $OLD_IMAGES"
           COUNT=$(echo "$OLD_IMAGES" | jq '. | length' 2>/dev/null || echo "0")
           echo "Total old images found: $COUNT"
-
           if [ "$COUNT" -gt "0" ]; then
             echo "Deleting old image(s)..."
             aws ecr batch-delete-image \
-              --repository-name "${ECR_REPOSITORY}" \
+              --repository-name "${{ env.ECR_REPOSITORY }}" \
               --region "${{ env.AWS_REGION }}" \
               --image-ids "$OLD_IMAGES" || echo "Failed to delete some images"
           else
@@ -111,14 +98,12 @@ jobs:
           fi
 
       - name: Stop and remove existing container
-        env:
-          CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
         run: |
           echo "==================================="
           echo "Stopping existing container"
           echo "==================================="
-          docker stop "${CONTAINER_NAME}" 2>/dev/null || true
-          docker rm "${CONTAINER_NAME}" 2>/dev/null || true
+          docker stop "${{ env.CONTAINER_NAME }}" 2>/dev/null || true
+          docker rm "${{ env.CONTAINER_NAME }}" 2>/dev/null || true
           echo "Old container removed successfully"
 
       - name: Remove old local Docker images
@@ -133,39 +118,33 @@ jobs:
           echo "==================================="
           echo "Pulling latest Docker image"
           echo "==================================="
-          docker pull "${IMAGE_URI}:latest"
+          docker pull "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest"
 
       - name: Run new Docker container
-        env:
-          CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
-          HOST_PORT: ${{ secrets.HOST_PORT }}
-          CONTAINER_PORT: ${{ secrets.CONTAINER_PORT }}
         run: |
           echo "==================================="
           echo "Starting new Docker container"
           echo "==================================="
           docker run -d \
-            --name "${CONTAINER_NAME}" \
+            --name "${{ env.CONTAINER_NAME }}" \
             --restart unless-stopped \
-            -p "${HOST_PORT}:${CONTAINER_PORT}" \
-            "${IMAGE_URI}:latest"
+            -p "3000:3000" \
+            "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest"
           echo "Container started successfully"
 
       - name: Verify container is running
-        env:
-          CONTAINER_NAME: ${{ secrets.CONTAINER_NAME }}
         run: |
           echo "==================================="
           echo "Verifying container status"
           echo "==================================="
           sleep 5
-          if docker ps | grep -q "${CONTAINER_NAME}"; then
+          if docker ps | grep -q "${{ env.CONTAINER_NAME }}"; then
             echo "✅ Container is running successfully"
             echo "Showing latest logs:"
-            docker logs --tail 10 "${CONTAINER_NAME}"
+            docker logs --tail 10 "${{ env.CONTAINER_NAME }}"
           else
             echo "❌ Container failed to start!"
-            docker logs "${CONTAINER_NAME}" 2>&1
+            docker logs "${{ env.CONTAINER_NAME }}" 2>&1
             exit 1
           fi
 
