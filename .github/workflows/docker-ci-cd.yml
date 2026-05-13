@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  AWS_REGION: 'ap-south-1'
+  AWS_REGION: 'us-west-2'  # Changed to match your EC2 runner region
 
 jobs:
   deploy:
@@ -31,6 +31,8 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: private
 
       - name: Echo ECR Details
         env:
@@ -89,7 +91,7 @@ jobs:
 
           OLD_IMAGES=$(aws ecr list-images \
             --repository-name "${ECR_REPOSITORY}" \
-            --region "${{ env.AWS_REGION }}" \
+            --region "ap-south-1" \
             --query "imageIds[?imageTag!='${{ env.IMAGE_TAG }}' && imageTag!='latest']" \
             --output json)
 
@@ -104,7 +106,7 @@ jobs:
             echo "Deleting old image(s)..."
             aws ecr batch-delete-image \
               --repository-name "${ECR_REPOSITORY}" \
-              --region "${{ env.AWS_REGION }}" \
+              --region "ap-south-1" \
               --image-ids "$OLD_IMAGES" || echo "Failed to delete some images"
           else
             echo "No old images to delete."
