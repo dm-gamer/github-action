@@ -35,7 +35,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Echo AWS Region
-        run: echo "Using AWS Region: $AWS_REGION"
+        run: echo "Using AWS Region: ${{ env.AWS_REGION }}"
 
       # ────── Fixed Step ──────
       - name: Login to Amazon ECR
