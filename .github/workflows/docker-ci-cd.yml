@@ -37,10 +37,9 @@ jobs:
       - name: Echo AWS Region
         run: echo "Using AWS Region: ${{ env.AWS_REGION }}"
 
-      # ────── Fixed Step ──────
       - name: Login to Amazon ECR
-            id: login-ecr
-          uses: aws-actions/amazon-ecr-login@v2
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
       - name: Echo ECR Details
         env:
@@ -65,7 +64,7 @@ jobs:
           echo "==================================="
 
           docker build -t "${IMAGE_URI}:${IMAGE_TAG}" .
-          
+
           echo "Tagging latest image..."
           docker tag "${IMAGE_URI}:${IMAGE_TAG}" "${IMAGE_URI}:latest"
 
@@ -81,7 +80,6 @@ jobs:
           
           docker push "${IMAGE_URI}:${{ env.IMAGE_TAG }}"
           docker push "${IMAGE_URI}:latest"
-          
           echo "Docker images pushed successfully"
 
       - name: Delete old images from ECR
@@ -98,9 +96,7 @@ jobs:
             --query "imageIds[?imageTag!='${{ env.IMAGE_TAG }}' && imageTag!='latest']" \
             --output json)
 
-          echo "Old Images JSON:"
-          echo "$OLD_IMAGES"
-
+          echo "Old Images JSON: $OLD_IMAGES"
           COUNT=$(echo "$OLD_IMAGES" | jq '. | length' 2>/dev/null || echo "0")
           echo "Total old images found: $COUNT"
 
@@ -169,7 +165,7 @@ jobs:
             docker logs --tail 10 "${CONTAINER_NAME}"
           else
             echo "❌ Container failed to start!"
-            docker logs "${CONTAINER_NAME}"
+            docker logs "${CONTAINER_NAME}" 2>&1
             exit 1
           fi
 
@@ -177,5 +173,5 @@ jobs:
         run: |
           echo "==================================="
           echo "🎉 CI/CD Pipeline Completed Successfully"
-          echo "Application deployed successfully hooray!"
+          echo "Application deployed successfully!"
           echo "==================================="
