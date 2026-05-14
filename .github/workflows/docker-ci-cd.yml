@@ -8,8 +8,8 @@ on:
 env:
   AWS_REGION: 'ap-south-1'
   ECR_REGISTRY: '611916855591.dkr.ecr.ap-south-1.amazonaws.com'
-  ECR_REPOSITORY: 'github-action'
-  CONTAINER_NAME: 'github-action'
+  ECR_REPOSITORY: 'dev-action'
+  CONTAINER_NAME: 'dev-action'
 
 jobs:
   deploy:
