@@ -4,13 +4,12 @@ on:
   push:
     branches:
       - main
-      - dev          # 👈 Add dev branch trigger
+      - dev
 
 env:
   AWS_REGION: 'ap-south-1'
   ECR_REGISTRY: '611916855591.dkr.ecr.ap-south-1.amazonaws.com'
-  ECR_REPOSITORY: 'github-action'
-  CONTAINER_NAME: 'github-action'
+  # ❌ REMOVED: ECR_REPOSITORY and CONTAINER_NAME (these are now set dynamically)
 
 jobs:
   deploy:
@@ -29,21 +28,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # =========================
-      # SET ENV PER BRANCH        👈 Key step - sets different values per branch
-      # =========================
       - name: Set Branch-Specific Variables
         run: |
           if [ "${{ github.ref_name }}" == "main" ]; then
-            echo "ENV_NAME=production"           >> $GITHUB_ENV
-            echo "PORT=3000"                     >> $GITHUB_ENV
-            echo "ECR_REPO=github-action"        >> $GITHUB_ENV
-            echo "CONTAINER=github-action"       >> $GITHUB_ENV
+            echo "ENV_NAME=production"          >> $GITHUB_ENV
+            echo "PORT=3000"                    >> $GITHUB_ENV
+            echo "ECR_REPO=github-action"       >> $GITHUB_ENV
+            echo "CONTAINER=github-action"      >> $GITHUB_ENV
           elif [ "${{ github.ref_name }}" == "dev" ]; then
-            echo "ENV_NAME=development"          >> $GITHUB_ENV
-            echo "PORT=3001"                     >> $GITHUB_ENV
-            echo "ECR_REPO=github-action-dev"    >> $GITHUB_ENV
-            echo "CONTAINER=github-action-dev"   >> $GITHUB_ENV
+            echo "ENV_NAME=development"         >> $GITHUB_ENV
+            echo "PORT=3001"                    >> $GITHUB_ENV
+            echo "ECR_REPO=github-action-dev"   >> $GITHUB_ENV
+            echo "CONTAINER=github-action-dev"  >> $GITHUB_ENV
           fi
 
       - name: Configure AWS credentials
@@ -62,7 +58,7 @@ jobs:
           set -e
 
           IMAGE_TAG="${{ github.sha }}"
-          IMAGE_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}"   # 👈 Uses branch-specific ECR repo
+          IMAGE_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}"
 
           echo "Building image for ${{ env.ENV_NAME }}..."
           docker build -t "${IMAGE_URI}:${IMAGE_TAG}" .
@@ -78,15 +74,19 @@ jobs:
         run: |
           set -e
 
+          echo "CONTAINER : ${{ env.CONTAINER }}"
+          echo "PORT      : ${{ env.PORT }}"
+          echo "IMAGE_URI : ${{ env.IMAGE_URI }}"
+
           docker stop "${{ env.CONTAINER }}" || true
-          docker rm "${{ env.CONTAINER }}"   || true
+          docker rm "${{ env.CONTAINER }}" || true
 
           docker pull "${{ env.IMAGE_URI }}:latest"
 
           docker run -d \
             --name "${{ env.CONTAINER }}" \
             --restart unless-stopped \
-            -p 3001:3001 \        # 👈 Different port per branch
+            -p "${{ env.PORT }}:3000" \
             "${{ env.IMAGE_URI }}:latest"
 
       - name: Verify Container
@@ -104,6 +104,7 @@ jobs:
 
       - name: Clean Old ECR Images
         run: |
+          set -e
           OLD_IMAGES=$(aws ecr list-images \
             --repository-name "${{ env.ECR_REPO }}" \
             --region "${{ env.AWS_REGION }}" \
@@ -123,4 +124,9 @@ jobs:
 
       - name: Success
         run: |
-          echo "✅ Deployed to ${{ env.ENV_NAME }} successfully"
+          echo "==================================="
+          echo "🎉 [${{ env.ENV_NAME }}] Deployment Successful"
+          echo "Branch : ${{ github.ref_name }}"
+          echo "Image  : ${{ env.IMAGE_URI }}:${{ env.IMAGE_TAG }}"
+          echo "Port   : ${{ env.PORT }}"
+          echo "==================================="
