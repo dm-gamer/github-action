@@ -86,7 +86,7 @@ jobs:
           docker run -d \
             --name "${{ env.CONTAINER }}" \
             --restart unless-stopped \
-            -p ${{ env.PORT }}:3000 \        # 👈 Different port per branch
+            -p ${{ env.PORT }}:3001 \        # 👈 Different port per branch
             "${{ env.IMAGE_URI }}:latest"
 
       - name: Verify Container
