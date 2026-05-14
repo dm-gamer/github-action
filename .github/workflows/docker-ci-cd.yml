@@ -158,3 +158,4 @@ jobs:
           echo "==================================="
           echo "🎉 Deployment Successful"
           echo "==================================="
+          echo "nothing to say"
