@@ -8,7 +8,7 @@ on:
 
 env:
   AWS_REGION: 'ap-south-1'
-  ECR_REGISTRY: '611916855591.dkr.ecr.ap-south-1.amazonaws.com'
+  ECR_REGISTRY: '693977051925.dkr.ecr.ap-south-1.amazonaws.com'
   # ❌ REMOVED: ECR_REPOSITORY and CONTAINER_NAME (these are now set dynamically)
 
 jobs:
