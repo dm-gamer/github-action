@@ -42,7 +42,7 @@ jobs:
           elif [ "${{ github.ref_name }}" == "dev" ]; then
             echo "ENV_NAME=development"          >> $GITHUB_ENV
             echo "PORT=3001"                     >> $GITHUB_ENV
-            echo "ECR_REPO=github-action-dev"    >> $GITHUB_ENV
+            echo "ECR_REPO=github-action"    >> $GITHUB_ENV
             echo "CONTAINER=github-action-dev"   >> $GITHUB_ENV
           fi
 
