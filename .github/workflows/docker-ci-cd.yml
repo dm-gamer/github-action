@@ -17,18 +17,26 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      - name: Echo Pipeline Start
+      # =========================
+      # START
+      # =========================
+      - name: Pipeline Start
         run: |
           echo "==================================="
           echo "🚀 CI/CD Pipeline Started"
-          echo "Workflow is running successfully..."
           echo "Branch: ${{ github.ref_name }}"
           echo "Commit: ${{ github.sha }}"
           echo "==================================="
 
+      # =========================
+      # CHECKOUT CODE
+      # =========================
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # =========================
+      # AWS AUTH
+      # =========================
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -37,118 +45,116 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      
+      # =========================
+      # LOGIN TO ECR
+      # =========================
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Echo ECR Details
+      # =========================
+      # BUILD + PUSH IMAGE
+      # =========================
+      - name: Build and Push Docker Image
         run: |
-          echo "ECR Registry: ${{ env.ECR_REGISTRY }}"
-          echo "ECR Repository: ${{ env.ECR_REPOSITORY }}"
+          set -e
 
-      - name: Build and tag Docker image
-        run: |
           IMAGE_TAG="${{ github.sha }}"
           IMAGE_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}"
-          echo "==================================="
-          echo "Building Docker Image"
-          echo "IMAGE TAG : ${IMAGE_TAG}"
-          echo "IMAGE URI : ${IMAGE_URI}"
-          echo "==================================="
+
+          echo "Building image..."
           docker build -t "${IMAGE_URI}:${IMAGE_TAG}" .
-          echo "Tagging latest image..."
+
+          echo "Tagging latest..."
           docker tag "${IMAGE_URI}:${IMAGE_TAG}" "${IMAGE_URI}:latest"
-          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
-          echo "IMAGE_URI=${IMAGE_URI}" >> "$GITHUB_ENV"
 
-      - name: Push Docker image to ECR
-        run: |
-          echo "==================================="
-          echo "Pushing Docker images to ECR"
-          echo "==================================="
-          echo "Pushing image: ${IMAGE_URI}:${{ env.IMAGE_TAG }}"
-          docker push "${IMAGE_URI}:${{ env.IMAGE_TAG }}"
+          echo "Pushing images..."
+          docker push "${IMAGE_URI}:${IMAGE_TAG}"
           docker push "${IMAGE_URI}:latest"
-          echo "Docker images pushed successfully"
 
-      - name: Delete old images from ECR
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
+          echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_ENV
+
+      # =========================
+      # DEPLOY ON EC2 (SAFE FLOW)
+      # =========================
+      - name: Deploy Container
         run: |
-          echo "==================================="
-          echo "Cleaning old ECR images"
-          echo "==================================="
+          set -e
+
+          echo "Stopping old container (if exists)..."
+          docker stop "${{ env.CONTAINER_NAME }}" || true
+          docker rm "${{ env.CONTAINER_NAME }}" || true
+
+          echo "Pulling latest image..."
+          docker pull "${{ env.IMAGE_URI }}:latest"
+
+          echo "Starting new container..."
+          docker run -d \
+            --name "${{ env.CONTAINER_NAME }}" \
+            --restart unless-stopped \
+            -p 3000:3000 \
+            "${{ env.IMAGE_URI }}:latest"
+
+      # =========================
+      # VERIFY DEPLOYMENT
+      # =========================
+      - name: Verify Container
+        run: |
+          set -e
+
+          sleep 5
+
+          if docker ps | grep -q "${{ env.CONTAINER_NAME }}"; then
+            echo "✅ Container running successfully"
+            docker logs --tail 10 "${{ env.CONTAINER_NAME }}"
+          else
+            echo "❌ Container failed to start"
+            docker logs "${{ env.CONTAINER_NAME }}" || true
+            exit 1
+          fi
+
+      # =========================
+      # CLEAN OLD ECR IMAGES (ONLY AFTER SUCCESS)
+      # =========================
+      - name: Clean Old ECR Images
+        run: |
+          set -e
+
+          echo "Fetching old images..."
+
           OLD_IMAGES=$(aws ecr list-images \
             --repository-name "${{ env.ECR_REPOSITORY }}" \
             --region "${{ env.AWS_REGION }}" \
             --query "imageIds[?imageTag!='${{ env.IMAGE_TAG }}' && imageTag!='latest']" \
             --output json)
-          echo "Old Images JSON: $OLD_IMAGES"
-          COUNT=$(echo "$OLD_IMAGES" | jq '. | length' 2>/dev/null || echo "0")
-          echo "Total old images found: $COUNT"
-          if [ "$COUNT" -gt "0" ]; then
-            echo "Deleting old image(s)..."
+
+          COUNT=$(echo "$OLD_IMAGES" | jq '. | length')
+
+          echo "Old images found: $COUNT"
+
+          if [ "$COUNT" -gt 0 ]; then
+            echo "Deleting old images..."
             aws ecr batch-delete-image \
               --repository-name "${{ env.ECR_REPOSITORY }}" \
               --region "${{ env.AWS_REGION }}" \
-              --image-ids "$OLD_IMAGES" || echo "Failed to delete some images"
+              --image-ids "$OLD_IMAGES" || true
           else
-            echo "No old images to delete."
+            echo "No old images to delete"
           fi
 
-      - name: Stop and remove existing container
+      # =========================
+      # CLEAN LOCAL DOCKER CACHE
+      # =========================
+      - name: Clean Local Docker Images
         run: |
-          echo "==================================="
-          echo "Stopping existing container"
-          echo "==================================="
-          docker stop "${{ env.CONTAINER_NAME }}" 2>/dev/null || true
-          docker rm "${{ env.CONTAINER_NAME }}" 2>/dev/null || true
-          echo "Old container removed successfully"
-
-      - name: Remove old local Docker images
-        run: |
-          echo "==================================="
-          echo "Removing unused local Docker images"
-          echo "==================================="
+          echo "Cleaning unused images..."
           docker image prune -f --filter "until=24h" || true
 
-      - name: Pull latest image from ECR
+      # =========================
+      # SUCCESS MESSAGE
+      # =========================
+      - name: Success
         run: |
           echo "==================================="
-          echo "Pulling latest Docker image"
-          echo "==================================="
-          docker pull "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest"
-
-      - name: Run new Docker container
-        run: |
-          echo "==================================="
-          echo "Starting new Docker container"
-          echo "==================================="
-          docker run -d \
-            --name "${{ env.CONTAINER_NAME }}" \
-            --restart unless-stopped \
-            -p "3000:3000" \
-            "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:latest"
-          echo "Container started successfully"
-
-      - name: Verify container is running
-        run: |
-          echo "==================================="
-          echo "Verifying container status"
-          echo "==================================="
-          sleep 5
-          if docker ps | grep -q "${{ env.CONTAINER_NAME }}"; then
-            echo "✅ Container is running successfully"
-            echo "Showing latest logs:"
-            docker logs --tail 10 "${{ env.CONTAINER_NAME }}"
-          else
-            echo "❌ Container failed to start!"
-            docker logs "${{ env.CONTAINER_NAME }}" 2>&1
-            exit 1
-          fi
-
-      - name: Echo Pipeline Success
-        run: |
-          echo "==================================="
-          echo "🎉 CI/CD Pipeline Completed Successfully"
-          echo "Application deployed successfully!"
+          echo "🎉 Deployment Successful"
           echo "==================================="
