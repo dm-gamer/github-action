@@ -4,12 +4,13 @@ on:
   push:
     branches:
       - main
+      - dev          # 👈 Add dev branch trigger
 
 env:
   AWS_REGION: 'ap-south-1'
   ECR_REGISTRY: '611916855591.dkr.ecr.ap-south-1.amazonaws.com'
-  ECR_REPOSITORY: 'dev-action'
-  CONTAINER_NAME: 'dev-action'
+  ECR_REPOSITORY: 'github-action'
+  CONTAINER_NAME: 'github-action'
 
 jobs:
   deploy:
@@ -17,9 +18,6 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      # =========================
-      # START
-      # =========================
       - name: Pipeline Start
         run: |
           echo "==================================="
@@ -28,15 +26,26 @@ jobs:
           echo "Commit: ${{ github.sha }}"
           echo "==================================="
 
-      # =========================
-      # CHECKOUT CODE
-      # =========================
       - name: Checkout repository
         uses: actions/checkout@v4
 
       # =========================
-      # AWS AUTH
+      # SET ENV PER BRANCH        👈 Key step - sets different values per branch
       # =========================
+      - name: Set Branch-Specific Variables
+        run: |
+          if [ "${{ github.ref_name }}" == "main" ]; then
+            echo "ENV_NAME=production"           >> $GITHUB_ENV
+            echo "PORT=3000"                     >> $GITHUB_ENV
+            echo "ECR_REPO=github-action"        >> $GITHUB_ENV
+            echo "CONTAINER=github-action"       >> $GITHUB_ENV
+          elif [ "${{ github.ref_name }}" == "dev" ]; then
+            echo "ENV_NAME=development"          >> $GITHUB_ENV
+            echo "PORT=3001"                     >> $GITHUB_ENV
+            echo "ECR_REPO=github-action-dev"    >> $GITHUB_ENV
+            echo "CONTAINER=github-action-dev"   >> $GITHUB_ENV
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -45,117 +54,73 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # =========================
-      # LOGIN TO ECR
-      # =========================
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # =========================
-      # BUILD + PUSH IMAGE
-      # =========================
       - name: Build and Push Docker Image
         run: |
           set -e
 
           IMAGE_TAG="${{ github.sha }}"
-          IMAGE_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}"
+          IMAGE_URI="${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}"   # 👈 Uses branch-specific ECR repo
 
-          echo "Building image..."
+          echo "Building image for ${{ env.ENV_NAME }}..."
           docker build -t "${IMAGE_URI}:${IMAGE_TAG}" .
-
-          echo "Tagging latest..."
           docker tag "${IMAGE_URI}:${IMAGE_TAG}" "${IMAGE_URI}:latest"
 
-          echo "Pushing images..."
           docker push "${IMAGE_URI}:${IMAGE_TAG}"
           docker push "${IMAGE_URI}:latest"
 
           echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
           echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_ENV
 
-      # =========================
-      # DEPLOY ON EC2 (SAFE FLOW)
-      # =========================
       - name: Deploy Container
         run: |
           set -e
 
-          echo "Stopping old container (if exists)..."
-          docker stop "${{ env.CONTAINER_NAME }}" || true
-          docker rm "${{ env.CONTAINER_NAME }}" || true
+          docker stop "${{ env.CONTAINER }}" || true
+          docker rm "${{ env.CONTAINER }}"   || true
 
-          echo "Pulling latest image..."
           docker pull "${{ env.IMAGE_URI }}:latest"
 
-          echo "Starting new container..."
           docker run -d \
-            --name "${{ env.CONTAINER_NAME }}" \
+            --name "${{ env.CONTAINER }}" \
             --restart unless-stopped \
-            -p 3000:3000 \
+            -p ${{ env.PORT }}:3000 \        # 👈 Different port per branch
             "${{ env.IMAGE_URI }}:latest"
 
-      # =========================
-      # VERIFY DEPLOYMENT
-      # =========================
       - name: Verify Container
         run: |
           set -e
-
           sleep 5
-
-          if docker ps | grep -q "${{ env.CONTAINER_NAME }}"; then
-            echo "✅ Container running successfully"
-            docker logs --tail 10 "${{ env.CONTAINER_NAME }}"
+          if docker ps | grep -q "${{ env.CONTAINER }}"; then
+            echo "✅ [${{ env.ENV_NAME }}] Container running"
+            docker logs --tail 10 "${{ env.CONTAINER }}"
           else
-            echo "❌ Container failed to start"
-            docker logs "${{ env.CONTAINER_NAME }}" || true
+            echo "❌ Container failed"
+            docker logs "${{ env.CONTAINER }}" || true
             exit 1
           fi
 
-      # =========================
-      # CLEAN OLD ECR IMAGES (ONLY AFTER SUCCESS)
-      # =========================
       - name: Clean Old ECR Images
         run: |
-          set -e
-
-          echo "Fetching old images..."
-
           OLD_IMAGES=$(aws ecr list-images \
-            --repository-name "${{ env.ECR_REPOSITORY }}" \
+            --repository-name "${{ env.ECR_REPO }}" \
             --region "${{ env.AWS_REGION }}" \
             --query "imageIds[?imageTag!='${{ env.IMAGE_TAG }}' && imageTag!='latest']" \
             --output json)
 
           COUNT=$(echo "$OLD_IMAGES" | jq '. | length')
-
-          echo "Old images found: $COUNT"
-
           if [ "$COUNT" -gt 0 ]; then
-            echo "Deleting old images..."
             aws ecr batch-delete-image \
-              --repository-name "${{ env.ECR_REPOSITORY }}" \
+              --repository-name "${{ env.ECR_REPO }}" \
               --region "${{ env.AWS_REGION }}" \
               --image-ids "$OLD_IMAGES" || true
-          else
-            echo "No old images to delete"
           fi
 
-      # =========================
-      # CLEAN LOCAL DOCKER CACHE
-      # =========================
       - name: Clean Local Docker Images
-        run: |
-          echo "Cleaning unused images..."
-          docker image prune -f --filter "until=24h" || true
+        run: docker image prune -f --filter "until=24h" || true
 
-      # =========================
-      # SUCCESS MESSAGE
-      # =========================
       - name: Success
         run: |
-          echo "==================================="
-          echo "🎉 Deployment Successful"
-          echo "==================================="
-          echo "nothing to say"
+          echo "✅ Deployed to ${{ env.ENV_NAME }} successfully"
